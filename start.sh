@@ -5,19 +5,21 @@
 # Virtuaaliympäristön polku
 VENV_PATH="venv"
 
-# Flask-sovelluksen tiedostonimi (oletetaan app.py, jossa Flask-instanssi on 'app')
+# Flask-sovelluksen tiedostonimi
 APP_FILE="app.py"
 
-# Flask-instanssin muuttujan nimi sovellustiedostossa (yleensä 'app')
-# MUISTA: Gunicornin syntaksi on [tiedosto]:[instanssin_nimi]
+# Flask-instanssin muuttujan nimi
 FLASK_INSTANCE_NAME="app"
 
-# Gunicornin työntekijöiden (workers) määrä (yleensä 2x CPU-ytimien määrä + 1)
+# Gunicornin työntekijöiden määrä
 WORKERS=5
 
 # Palvelimen osoite ja portti
-# Korvaa tarvittaessa 0.0.0.0:5000 haluamallasi osoitteella
 BIND_ADDRESS="0.0.0.0:5000"
+
+# --- LOKIASETUKSET (Fail2Ban tarvitsee nämä) ---
+ACCESS_LOG="access.log"
+ERROR_LOG="error.log"
 
 # --- Skripti alkaa ---
 
@@ -25,41 +27,42 @@ echo "Käynnistetään Flask-palvelin (Gunicornilla)..."
 
 # 1. Tarkista ja aktivoi virtuaaliympäristö
 if [ -d "$VENV_PATH" ]; then
-    echo "Aktivoidaan virtuaaliympäristö $VENV_PATH/bin/activate"
-    # Aktivoi ympäristö käyttämällä 'source'
+    echo "Aktivoidaan virtuaaliympäristö"
     source "$VENV_PATH/bin/activate"
 else
-    echo "VIRHE: Virtuaaliympäristöä ei löydy polusta $VENV_PATH."
-    echo "Luo virtuaaliympäristö komennolla 'python3 -m venv venv' ja asenna Flask/Gunicorn."
+    echo "VIRHE: Virtuaaliympäristöä ei löydy."
     exit 1
 fi
 
-# 2. Tarkista, onko sovellustiedosto olemassa
-# Poistetaan .py-pääte tiedostonimestä Gunicornia varten
+# 2. Tarkista sovellustiedosto
 APP_MODULE=$(basename "$APP_FILE" .py)
 
 if [ ! -f "$APP_FILE" ]; then
     echo "VIRHE: Sovellustiedostoa '$APP_FILE' ei löydy."
-    deactivate # Poistu virtuaaliympäristöstä
-    exit 1
-fi
-
-# 3. Tarkista, onko Gunicorn asennettu (valinnainen, mutta suositeltava)
-if ! command -v gunicorn &> /dev/null; then
-    echo "VIRHE: Gunicorn ei ole asennettu virtuaaliympäristöön."
-    echo "Asenna se komennolla 'pip install gunicorn' ja yritä uudelleen."
     deactivate
     exit 1
 fi
 
-# 4. Käynnistä Flask-sovellus Gunicornilla
-# Syntaksi: gunicorn --workers [workers] --bind [osoite] [moduuli]:[instanssi]
-echo "Suoritetaan komento: gunicorn --workers $WORKERS --bind $BIND_ADDRESS $APP_MODULE:$FLASK_INSTANCE_NAME"
+# 3. Tarkista Gunicorn
+if ! command -v gunicorn &> /dev/null; then
+    echo "VIRHE: Gunicorn ei ole asennettu."
+    deactivate
+    exit 1
+fi
 
-gunicorn --workers "$WORKERS" --bind "$BIND_ADDRESS" "$APP_MODULE":"$FLASK_INSTANCE_NAME"
+# 4. Käynnistä Flask-sovellus Gunicornilla ja kirjoita lokia
+echo "Suoritetaan Gunicorn portaassa $BIND_ADDRESS..."
+echo "Loki tallennetaan tiedostoon: $ACCESS_LOG"
+
+# TÄMÄ ON MUUTETTU RIVI:
+gunicorn --workers "$WORKERS" \
+         --bind "$BIND_ADDRESS" \
+         --access-logfile "$ACCESS_LOG" \
+         --error-logfile "$ERROR_LOG" \
+         --access-logformat '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"' \
+         "$APP_MODULE":"$FLASK_INSTANCE_NAME"
 
 # --- Skripti loppuu ---
 
-# Kun Gunicorn suljetaan (esim. Ctrl+C), deaktivoi ympäristö
 deactivate
-echo "Palvelin suljettu ja virtuaaliympäristö deaktivoitu."
+echo "Palvelin suljettu."
