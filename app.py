@@ -57,12 +57,12 @@ def init_db():
 
 init_db()
 
-# --- API: Turva- ja siirtotoiminnot ---
+# --- API: VIENTI (Security data upload) ---
 
-@app.route('/update_user_security', methods=['POST'])
-def update_user_security():
+@app.route('/vienti', methods=['POST'])
+def vienti():
     data = request.json
-    user_id = data.get('user_id')
+    user_id = data.get('user_id') # TÄRKEÄ: user_id tarvitaan tallennukseen
     if not user_id: return jsonify({"error": "User ID required"}), 400
 
     db = get_db()
@@ -81,25 +81,25 @@ def update_user_security():
     db.commit()
     return jsonify({"status": "success"}), 200
 
-def check_and_invalidate_key(db, user_id):
-    """ Tarkistaa onko molemmat haut tehty ja nollaa avaimen jos on. """
-    user = db.execute("SELECT items_fetched, security_fetched FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    if user and user['items_fetched'] == 1 and user['security_fetched'] == 1:
-        db.execute("UPDATE users SET one_time_key = NULL, items_fetched = 0, security_fetched = 0 WHERE user_id = ?", (user_id,))
-        db.commit()
+# --- API: TUONTI (Security data download) ---
 
-@app.route('/get_security', methods=['POST'])
-def get_security():
+@app.route('/tuonti', methods=['POST'])
+def tuonti():
     data = request.json
-    user_id = data.get('user_id')
-    key = data.get('one_time_key')
+    user_id = data.get('user_id')        # TUONTI TARVITSEE TÄMÄN
+    key = data.get('one_time_key')      # JA TÄMÄN (siirtokoodi)
+
+    if not user_id or not key:
+        return jsonify({"error": "User ID and Transfer Key required"}), 400
 
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
     
+    # Tarkistetaan onko käyttäjä olemassa, onko avain oikein ja onko se vielä voimassa
     if not user or user['one_time_key'] != key or time.time() > user['key_expiry']:
-        return jsonify({"error": "Invalid or expired key"}), 403
+        return jsonify({"error": "Invalid User ID, key or key expired"}), 403
 
+    # Merkitään turvatiedot noudetuksi
     db.execute("UPDATE users SET security_fetched = 1 WHERE user_id = ?", (user_id,))
     db.commit()
     
@@ -110,6 +110,7 @@ def get_security():
         "backup_password": user['backup_password']
     }
     
+    # Nollataan avain jos molemmat (security & items) on haettu
     check_and_invalidate_key(db, user_id)
     return jsonify(result)
 
@@ -368,6 +369,13 @@ def delete_user_data(user_id):
     db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
     db.commit()
     return redirect(url_for('all_items_web'))
+
+@app.route('/delete_item/<user_id>/<int:item_id>', methods=['DELETE'])
+def delete_item(user_id, item_id):
+    db = get_db()
+    db.execute("DELETE FROM items WHERE user_id = ? AND id = ?", (user_id, item_id))
+    db.commit()
+    return jsonify({"status": "deleted"}), 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5001)
